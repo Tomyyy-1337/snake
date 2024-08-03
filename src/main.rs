@@ -3,7 +3,11 @@ use std::collections::VecDeque;
 use nannou::{event::Update, rand::{thread_rng, Rng}, time::DurationF64, App, Frame};
 
 fn main() {
-    nannou::app(Model::new).update(Model::update).run();
+    // get available refresh rate of the monitor
+    nannou::app(Model::new)
+        .update(Model::update)
+        .loop_mode(nannou::LoopMode::refresh_sync())
+        .run();
 }
 
 struct Model {
@@ -12,22 +16,24 @@ struct Model {
     bot: bool,
     highscore: u32,
     running: bool,
+    speed: f32,
 }
 
 impl Model {
     fn new(app: &nannou::App) -> Self {
         app.new_window()
-            .size(512, 512)
+            .size(800, 800)
             .view(Model::view)
             .build()
             .unwrap();
 
         Model {
-            snake: Snake::new((-20, -20, 20, 20)),
+            snake: Snake::new((-22, -22, 22, 22)),
             timer: 0.0,
             bot: true,
             highscore: 0,
             running: true,
+            speed: 0.1,
         }
 
     }
@@ -35,17 +41,23 @@ impl Model {
     pub fn update(app: &App, model: &mut Model, update: Update) {
         app.keys.down.iter().for_each(|key| {
             match key {
-                nannou::event::Key::Up => {
+                nannou::event::Key::W => {
                     model.snake.direction = Direction::Up;
                 }
-                nannou::event::Key::Down => {
+                nannou::event::Key::S => {
                     model.snake.direction = Direction::Down;
                 }
-                nannou::event::Key::Left => {
+                nannou::event::Key::A => {
                     model.snake.direction = Direction::Left;
                 }
-                nannou::event::Key::Right => {
+                nannou::event::Key::D => {
                     model.snake.direction = Direction::Right;
+                }
+                nannou::event::Key::Up => {
+                    model.speed *= 1.1;
+                }
+                nannou::event::Key::Down => {
+                    model.speed /= 1.1;
                 }
                 nannou::event::Key::Return => {
                     model.bot = !model.bot;
@@ -54,7 +66,12 @@ impl Model {
                     model.running = !model.running;
                 }
                 nannou::event::Key::R => {
-                    model.snake = Snake::new((-20, -20, 20, 20));
+                    model.snake = Snake::new((-12, -12, 12, 12));
+                }
+                nannou::event::Key::F11 => {
+                    let win_id = app.window_id();
+                    let window = app.window(win_id).unwrap();
+                    window.set_fullscreen(!window.is_fullscreen());
                 }
                 _ => {}
             }
@@ -63,40 +80,53 @@ impl Model {
         if !model.running {
             return;
         }
-        
+        let step_time = 1.0 / 90 as f32 / model.speed;
         model.timer += update.since_last.secs() as f32;
-        if model.timer < 0.02 {
-            return;
+
+        if model.speed < 1.0 {
+            if model.timer < step_time {
+                return;
+            }
         }
 
 
         if model.bot {
-            let snake_len = model.snake.body.len();
-            let height = model.snake.borders.3 - model.snake.borders.1 - 4;
-            let colls = snake_len / height as usize + 2;
+            let steps = (model.speed as usize).max(1);
+            for _ in 0..steps {
+                let &(x, y) = model.snake.body.front().unwrap();
+                let mut dir = model.snake.path_direction(x, y);
+                let mut path_len = model.snake.path_len(x, y);
+                let snake_len = model.snake.body.len() as u32;
 
-            if model.snake.apple.0 >= model.snake.body.front().unwrap().0 && model.snake.body.front().unwrap().0 < model.snake.borders.2 - colls as i32 {
-                if let Some(direction) = model.snake.direction_to_apple() {
-                    model.snake.direction = direction;
-                } else{
-                    model.snake.direction = model.snake.path_direction();
+                if y < model.snake.borders.3 - 2 
+                && x < model.snake.borders.2 - 2 
+                && model.snake.path_len(x + 1, y) < path_len  
+                && !model.snake.body.contains(&(x + 1, y)) 
+                && snake_len < model.snake.free_path_len(x + 1, y) {
+                    path_len = model.snake.path_len(x + 1, y);
+                    dir = Direction::Right;
                 }
-            } else {
-                if model.snake.body.front().unwrap().0 < model.snake.borders.2 - colls as i32 && model.snake.body.front().unwrap().1 < model.snake.borders.3 - 2 {
-                    model.snake.direction = Direction::Right;
-                } else {
-                    model.snake.direction = model.snake.path_direction();
+
+                if y == model.snake.borders.3 - 2
+                && x < model.snake.borders.2 - 3
+                && model.snake.path_len(x, y - 1) < path_len
+                && !model.snake.body.contains(&(x, y - 1))
+                && snake_len < model.snake.free_path_len(x, y - 1) {
+                    dir = Direction::Down;
                 }
+                model.snake.direction = dir;
+                model.snake.step();   
             }
+        } else {
+            model.snake.step();
         }
-        model.snake.step();
 
         if model.snake.body.len() as u32 > model.highscore {
             model.highscore = model.snake.body.len() as u32;
             println!("Highscore: {}", model.highscore);
         }
 
-        model.timer = 0.0;
+        model.timer -= step_time;
     }
 
     pub fn view(app: &App, model: &Model, frame: Frame) {
@@ -184,9 +214,7 @@ impl Snake {
         }
     }
 
-    fn path_direction(&self) -> Direction {
-        let &(x, y) = self.body.front().unwrap();
-
+    fn path_direction(&self, x: i32, y: i32) -> Direction {
         if y == self.borders.3 - 2 && x > self.borders.0 + 1 {
             return Direction::Left;
         }
@@ -204,6 +232,45 @@ impl Snake {
                 return Direction::Up;
             }
         }
+    }
+
+    fn free_path_len(&self, x: i32, y: i32) -> u32 {
+        let (mut x, mut y) = (x, y);
+        let mut len = 0;
+        let snakelen = self.body.len();
+        let mut apples = 0;
+        loop {
+            match self.path_direction(x, y) {
+                Direction::Up => y += 1,
+                Direction::Down => y -= 1,
+                Direction::Left => x -= 1,
+                Direction::Right => x += 1,
+            }
+            if x == self.apple.0 && y == self.apple.1 {
+                apples += 1;
+            }
+            len += 1;
+            let collision_index = self.body.iter().take(snakelen - 1 - len + apples).position(|&(x_body, y_body)| x_body == x && y_body == y); 
+            if collision_index.is_some() {
+                break;
+            }
+        }
+        len as u32
+    }
+
+    fn path_len(&self, x: i32,  y: i32) -> u32 {
+        let (mut x, mut y) = (x,y);
+        let mut len = 0;
+        while x != self.apple.0 || y != self.apple.1 {
+            match self.path_direction(x, y) {
+                Direction::Up => y += 1,
+                Direction::Down => y -= 1,
+                Direction::Left => x -= 1,
+                Direction::Right => x += 1,
+            }
+            len += 1;
+        }
+        len
     }
 
     fn direction_to_apple(&self) -> Option<Direction> {
