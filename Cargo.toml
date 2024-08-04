@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 nannou = "0.19.0"
+rand = "0.8.5"
+indicatif = "0.17.8"
+rayon = "1.10.0"
