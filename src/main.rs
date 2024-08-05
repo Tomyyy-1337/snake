@@ -61,56 +61,24 @@ impl Model {
 
         if model.snake.body.len() == 0 {
             model.snake = Snake::new((-(model.size as i32), -(model.size as i32), model.size as i32, model.size as i32));
+            model.timer = -10.0;
         }
 
 
         if model.bot {
-            let steps = (model.speed as usize).max(1);
-            for _ in 0..steps {
-                let &(x, y) = model.snake.body.front().unwrap();
-                let mut dir = model.snake.path_direction(x, y);
-                let mut path_len = model.snake.path_len(x, y);
-                let snake_len = model.snake.body.len() as u32;
-
-                    
-                if y < model.snake.borders.3 - 2
-                && x < model.snake.borders.2 - 2
-                && model.snake.path_len(x, y + 1) + 1 < path_len
-                && !model.snake.body.contains(&(x, y + 1))
-                && snake_len <= model.snake.free_path_len(x, y + 1, snake_len) {
-                    path_len = model.snake.path_len(x, y + 1) + 1;
-                    dir = Direction::Up;
-                }
-                if y > model.snake.borders.1 + 1
-                && x < model.snake.borders.2 - 2
-                && model.snake.path_len(x, y - 1) + 1 < path_len
-                && !model.snake.body.contains(&(x, y - 1))
-                && snake_len <= model.snake.free_path_len(x, y - 1, snake_len) {
-                    path_len = model.snake.path_len(x, y - 1) + 1;
-                    dir = Direction::Down;
-                }
-
-                if x > model.snake.borders.0 + 1
-                && y < model.snake.borders.3 - 2
-                && model.snake.path_len(x - 1, y) + 1 < path_len
-                && !model.snake.body.contains(&(x - 1, y))
-                && snake_len <= model.snake.free_path_len(x - 1, y, snake_len) {
-                    path_len = model.snake.path_len(x - 1, y) + 1;
-                    dir = Direction::Left;
-                }   
-
-                if x < model.snake.borders.2 - 2
-                && y < model.snake.borders.3 - 2
-                && model.snake.path_len(x + 1, y) + 1 < path_len
-                && !model.snake.body.contains(&(x + 1, y))
-                && snake_len <= model.snake.free_path_len(x + 1, y, snake_len) {
-                    dir = Direction::Right;
-                }
+            for _ in 0..(model.speed as usize).max(1) {
+                let dir = Snake::bot_move(model);
                 model.snake.direction = dir;
-                model.snake.step();   
+                if !model.snake.step() {
+                    model.snake = Snake::new((-(model.size as i32), -(model.size as i32), model.size as i32, model.size as i32));
+                    model.timer = -3.0;
+                }
             }
         } else {
-            model.snake.step();
+            if !model.snake.step() {
+                model.snake = Snake::new((-(model.size as i32), -(model.size as i32), model.size as i32, model.size as i32));
+                model.timer = -3.0;
+            }
         }
 
         if model.snake.body.len() as u32 > model.highscore {
@@ -133,13 +101,24 @@ impl Model {
             for j in model.snake.borders.1..model.snake.borders.3 {
                 let (x, y) = model.to_screen_coords(size, i, j);
                 if i == model.snake.borders.0 || i == model.snake.borders.2 - 1 || j == model.snake.borders.1 || j == model.snake.borders.3 - 1 {
-                    let color = nannou::color::ORANGE;
+                    let color = nannou::color::rgb(0.2, 0.4, 0.2);
                     draw.rect()
                         .x_y(x, y)
-                        .w_h(sqare_size, sqare_size)
+                        .w_h(sqare_size * 0.9, sqare_size * 0.9)
                         .z(0.0)
                         .color(color);
-                };
+                } else {
+                    let color = if (i + j + size as i32 * size as i32) % 2 == 0 {
+                        nannou::color::rgb(0.02, 0.2, 0.02)
+                    } else {
+                        nannou::color::rgb(0.04, 0.1, 0.04)
+                    };
+                    draw.rect()
+                        .x_y(x, y)
+                        .w_h(sqare_size * 0.9, sqare_size * 0.9)
+                        .z(0.0)
+                        .color(color);
+                }
             }
         }
 
@@ -161,7 +140,7 @@ impl Model {
             draw.line()
                 .start(Vec2::new(start.0, start.1))
                 .end(Vec2::new(end.0, end.1))
-                .color(nannou::color::WHITE);
+                .color(nannou::color::rgba(1.0, 1.0, 1.0, 0.3));
         }
 
         let base = 0.55f32.powf(1.0 / model.snake.body.len() as f32).max(0.94);
@@ -224,6 +203,8 @@ impl Model {
 
 
 }
+
+
 
 fn handle_keyboard_input(model: &mut Model, update: Update, app: &App) {
     model.key_cooldown -= update.since_last.secs() as f32;
@@ -444,7 +425,7 @@ impl Snake {
                 apples += 1;
             }
             len += 1;
-            let collision_index = self.body.iter().take(snakelen - 1 - len + apples).position(|&(x_body, y_body)| x_body == x && y_body == y); 
+            let collision_index = self.body.iter().take(snakelen - len + apples).position(|&(x_body, y_body)| x_body == x && y_body == y); 
             if collision_index.is_some() || len >= max_len as usize || (base_x == x && base_y == y) {
                 break;
             }
@@ -533,8 +514,47 @@ impl Snake {
             }
         }
     }
-    
-     
-    
+
+    fn bot_move(model: &mut Model) -> Direction {
+        let &(x, y) = model.snake.body.front().unwrap();
+        let mut dir = model.snake.path_direction(x, y);
+        let mut path_len = model.snake.path_len(x, y);
+        let snake_len = model.snake.body.len() as u32;
+        
+        if y < model.snake.borders.3 - 2
+        && x < model.snake.borders.2 - 2
+        && model.snake.path_len(x, y + 1) + 1 < path_len
+        && !model.snake.body.contains(&(x, y + 1))
+        && snake_len <= model.snake.free_path_len(x, y + 1, snake_len) {
+            path_len = model.snake.path_len(x, y + 1) + 1;
+            dir = Direction::Up;
+        }
+        if y > model.snake.borders.1 + 1
+        && x < model.snake.borders.2 - 2
+        && model.snake.path_len(x, y - 1) + 1 < path_len
+        && !model.snake.body.contains(&(x, y - 1))
+        && snake_len <= model.snake.free_path_len(x, y - 1, snake_len) {
+            path_len = model.snake.path_len(x, y - 1) + 1;
+            dir = Direction::Down;
+        }
+
+        if x > model.snake.borders.0 + 1
+        && y < model.snake.borders.3 - 2
+        && model.snake.path_len(x - 1, y) + 1 < path_len
+        && !model.snake.body.contains(&(x - 1, y))
+        && snake_len <= model.snake.free_path_len(x - 1, y, snake_len) {
+            path_len = model.snake.path_len(x - 1, y) + 1;
+            dir = Direction::Left;
+        }   
+
+        if x < model.snake.borders.2 - 2
+        && y < model.snake.borders.3 - 2
+        && model.snake.path_len(x + 1, y) + 1 < path_len
+        && !model.snake.body.contains(&(x + 1, y))
+        && snake_len <= model.snake.free_path_len(x + 1, y, snake_len) {
+            dir = Direction::Right;
+        }
+        dir 
+    }
 }
 
